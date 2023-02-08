@@ -20,6 +20,8 @@ using SparseArrays
 using DiffResults
 using ForwardDiff
 using Printf
+using LaTeXStrings
+using Distributions
 
 # The Timer submodule
 include("Timer.jl")
@@ -34,6 +36,7 @@ include("misc.jl")
 
 # NOTE: The order of inclusions matters.
 include("abstract.jl")
+include("prior.jl")
 include("parameters.jl")
 include("evaluation.jl")
 include("transformations.jl")

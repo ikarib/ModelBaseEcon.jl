@@ -6,6 +6,8 @@
 ##################################################################################
 
 using ModelBaseEcon
+using LaTeXStrings
+using Distributions
 using SparseArrays
 using Test
 
@@ -482,23 +484,23 @@ params = @parameters
 custom(x) = x + one(x)
 const val = 12.0
 params.b = custom(val)
-params.a = @link custom(val)
+params.a = :(custom(val))
 end
 
 @testset "Parameters" begin
     params = Parameters()
-    push!(params, :a => 1.0)
-    push!(params, :b => @link 1.0 - a)
-    push!(params, :c => @alias b)
-    push!(params, :e => [1, 2, 3])
-    push!(params, :d => @link (sin(2π / e[3])))
+    push!(params, :a => :(1.0))
+    push!(params, :b => :(1.0 - a))
+    push!(params, :c => :(b))
+    push!(params, :e => :([1, 2, 3]))
+    push!(params, :d => :(sin(2π / e[3])))
     @test length(params) == 5
     # dot notation evaluates
     @test params.a isa Number
     @test params.b isa Number
     @test params.c isa Number
     @test params.d isa Number
-    @test params.e isa Vector{<:Number}
+    @test params.e isa Vector{<:Any}
     # [] notation returns the holding structure
     a = params[:a]
     b = params[:b]
@@ -516,23 +518,20 @@ end
     @test d.depends == Set([])
     @test e.depends == Set([:d])
     # circular dependencies not allowed
-    @test_throws ArgumentError push!(params, :a => @alias b)
+    @test_throws ArgumentError push!(params, :a => :(b))
     # even deep ones
-    @test_throws ArgumentError push!(params, :a => @alias c)
+    @test_throws ArgumentError push!(params, :a => :(c))
     # even when it is in an expr
-    @test_throws ArgumentError push!(params, :a => @link 5 + b^2)
-    @test_throws ArgumentError push!(params, :a => @link 3 - c)
+    @test_throws ArgumentError push!(params, :a => :(5 + b^2))
+    @test_throws ArgumentError push!(params, :a => :(3 - c))
 
     @test params.d ≈ √3 / 2.0
     params.e[3] = 2
     update_links!(params)
     @test 1.0 + params.d ≈ 1.0
 
-    params.d = @link cos(2π / e[2])
+    params.d = :(cos(2π / e[2]))
     @test params.d ≈ -1.0
-
-    @test_throws ArgumentError @alias a + 5
-    @test_throws ArgumentError @link 28
 
     @test MetaTest.params.a ≈ 13.0
     @test MetaTest.params.b ≈ 13.0
@@ -542,10 +541,6 @@ end
     update_links!(MetaTest.params)
     @test MetaTest.params.a ≈ 25.0
     @test MetaTest.params.b ≈ 13.0
-
-    @test @alias(c) == ModelParam(Set(), :c, nothing)
-    @test @link(c) == ModelParam(Set(), :c, nothing)
-    @test @link(c + 1) == ModelParam(Set(), :(c + 1), nothing)
 
     @test_throws ArgumentError params[:contents] = 5
     @test_throws ArgumentError params.abc
@@ -564,6 +559,17 @@ end
             end
         end
     end
+
+    push!(params, :α => :( 0.3 | "alpha" ))
+    push!(params, :β => :( 0.99 | "beta" | L"\beta" ))
+    push!(params, :δ => :( 0.02 | "delta" | L"\delta" | "depreciation rate" ))
+    push!(params, :ξ => :( 1.0 | "xi" | L"\xi" | "risk aversion" | Normal(1.5,.37) | true ))
+
+    @test params[:α].label == "alpha"
+    @test params[:β].latex_label == L"\beta"
+    @test params[:δ].description == "depreciation rate"
+    @test params[:ξ].prior == Normal(1.5,.37)
+    @test params[:ξ].estimate == true
 end
 
 @testset "ifelse" begin
@@ -590,7 +596,7 @@ end
 
 @testset "Meta" begin
     mod = Model()
-    @parameters mod a = 0.1 b = @link(1.0 - a)
+    @parameters mod a = 0.1 b = :(1.0 - a)
     @variables mod x
     @shocks mod sx
     @equations mod begin
@@ -662,9 +668,9 @@ end
         m.warn.no_t = false
         @parameters m begin
             a = 0.3
-            b = @link 1 - a
+            b = 1 - a
             d = [1, 2, 3]
-            c = @link sin(2π / d[3])
+            c = sin(2π / d[3])
         end
         @variables m begin
             "variable x"
@@ -689,9 +695,9 @@ end
         @test equations(TestModel.model) == equations(m)
         @test sstate(TestModel.model).constraints == sstate(m).constraints
 
-        @test_throws ArgumentError TestModel.model.parameters.d = @alias c
+        @test_throws ArgumentError TestModel.model.parameters.d = ModelParam(:c)
 
-        @test export_parameters(TestModel.model) == Dict(:a => 0.3, :b => 0.7, :d => [1, 2, 3], :c => sin(2π / 3))
+        @test export_parameters(TestModel.model) == Dict(:a => 0.3, :b => 0.7, :d => :(Any[1, 2, 3]), :c => sin(2π / 3))
         @test export_parameters!(Dict{Symbol,Any}(), TestModel.model) == export_parameters(TestModel.model.parameters)
 
         p = deepcopy(parameters(m))
@@ -815,8 +821,8 @@ end
     let m = E1.model
         @test propertynames(m.parameters) == (:α, :β)
         @test peval(m, :α) == 0.5
-        m.β = @link 1.0 - α
-        m.parameters.beta = @alias β
+        m.β = :(1.0 - α)
+        m.parameters.beta = :β
         for α = 0.0:0.1:1.0
             m.α = α
             test_eval_RJ(m, [0.0], [-α 1.0 -m.beta 0.0 -1.0 0.0;])

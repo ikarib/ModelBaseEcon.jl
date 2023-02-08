@@ -8,7 +8,7 @@
 import MacroTools: @forward
 
 export Parameters, ModelParam, peval
-export @parameters, @peval, @alias, @link
+export @parameters, @peval
 
 """
     abstract type AbstractParam end
@@ -36,13 +36,10 @@ access by bracket notation returns its internal structure, while access by dot
 notation returns its current value depending on other parameters.
 
 Write access is the same in both dot and bracket notation. The new parameter
-value is assigned directly in the case of simple parameter. To create an alias
-parameter, use the [`@alias`](@ref) macro. To create a link parameter use the
-[`@link`](@ref) macro.
+value is assigned directly in the case of simple parameter.
 
 
-See also: [`ModelParam`](@ref), [`peval`](@ref), [`@alias`](@ref),
-[`@link`](@ref), [`update_links!`](@ref).
+See also: [`ModelParam`](@ref), [`peval`](@ref), [`update_links!`](@ref).
 """
 struct Parameters{P<:AbstractParam} <: AbstractDict{Symbol,P}
     mod::Ref{Module}
@@ -61,10 +58,15 @@ mutable struct ModelParam <: AbstractParam
     depends::Set{Symbol}  # stores the names of parameter that depend on this one
     link::Union{Nothing,Symbol,Expr}
     value
+    label::String # ascii name
+    latex_label::LaTeXString # LaTex name
+    description::String
+    prior # Prior distribution
+    estimate::Bool # estimated? (true or false)
 end
-ModelParam() = ModelParam(Set{Symbol}(), nothing, nothing)
-ModelParam(value) = ModelParam(Set{Symbol}(), nothing, value)
-ModelParam(value::Union{Symbol,Expr}) = ModelParam(Set{Symbol}(), value, nothing)
+ModelParam() = ModelParam(Set{Symbol}(), nothing, nothing, "", L"", "", nothing, false)
+ModelParam(value) = ModelParam(Set{Symbol}(), nothing, value, "", L"", "", nothing, false)
+ModelParam(value::Union{Symbol,Expr}) = ModelParam(Set{Symbol}(), value, nothing, "", L"", "", nothing, false)
 
 Base.hash(mp::ModelParam, h::UInt) = hash((mp.link, mp.value), h)
 
@@ -104,55 +106,10 @@ Base.deepcopy_internal(p::Parameters, stackdict::IdDict) = Parameters(Ref(p.mod[
 # dict access
 @forward Parameters.contents Base.get, Base.get!
 
-"""
-    @alias name
-
-Create a parameter alias. Use `@alias` in the [`@parameters`](@ref) section of your
-model definition.
-```
-@parameters model begin
-    a = 5
-    b = @alias a
-end
-```
-"""
-macro alias(arg)
-    return arg isa Symbol ? ModelParam(arg) : :(throw(ArgumentError("`@alias` requires a symbol. Use `@link` with expressions.")))
-end
-
-"""
-    @link expr
-
-Create a parameter link. Use `@link` in the [`@parameters`](@ref) section of
-your model definition.
-
-If your parameter depends on other parameters, then you use `@link` to declare
-that. The expression can be any valid Julia code.
-```
-@parameters model begin
-    a = 5
-    b = @link a + 1
-end
-```
-
-When a parameter the link depends on is assigned a new value, the link that
-depends on it gets updated automatically.
-
-!!! note "Important note"
-    There are two cases in which the value of a link does not get updated automatically.
-    If the parameter it depends on is mutable, e.g. a `Vector`, it is possible for it to get
-    updated in place. The other case is when the link contains global variable or custom function.
-
-    In such case, it is necessary to call [`update_links!`](@ref).
-"""
-macro link(arg)
-    return arg isa Union{Symbol,Expr} ? ModelParam(arg) : :(throw(ArgumentError("`@link` requires an expression.")))
-end
-
 Base.show(io::IO, p::ModelParam) = begin
     p.link === nothing ? print(io, p.value) :
-    p.link isa Symbol ? print(io, "@alias ", p.link) :
-    print(io, "@link ", p.link)
+    p.link isa Symbol ? print(io, p.link) :
+    print(io, p.link)
 end
 
 Base.:(==)(l::ModelParam, r::ModelParam) = l.link === nothing && l.value == r.value || l.link == r.link
@@ -227,8 +184,7 @@ substituted by their values and the expression is evaluated.
 
 If `what is any other value, it is returned unchanged.`
 
-See also: [`Parameters`](@ref), [`@alias`](@ref), [`@link`](@ref),
-[`ModelParam`](@ref), [`update_links!`](@ref).
+See also: [`Parameters`](@ref), [`ModelParam`](@ref), [`update_links!`](@ref).
 
 """
 function peval end
@@ -352,6 +308,44 @@ function update_links!(params::Parameters)
 end
 
 function Base.setindex!(params::Parameters, val, key)
+    label = ""
+    latex_label = L""
+    prior = nothing
+    estimate = false
+    description = ""
+    if val isa Symbol
+        val = ModelParam(val)
+    end
+    if val isa Expr
+        if val.head == :call
+            # variable = value | ascii name | LaTex name | description | Prior distribution | estimated
+            if val.args[1] == :(|)
+                if val.args[2] isa Expr && val.args[2].head == :call && val.args[2].args[1] == :(|)
+                    if val.args[2].args[2] isa Expr && val.args[2].args[2].head == :call && val.args[2].args[2].args[1] == :(|)
+                        if val.args[2].args[2].args[2] isa Expr && val.args[2].args[2].args[2].head == :call && val.args[2].args[2].args[2].args[1] == :(|)
+                            if val.args[2].args[2].args[2].args[2] isa Expr && val.args[2].args[2].args[2].args[2].head == :call && val.args[2].args[2].args[2].args[2].args[1] == :(|)
+                                estimate = val.args[3]
+                                val = val.args[2]
+                            end
+                            if val.args[3] !== :(_)
+                                prior = params.mod[].eval(val.args[3])
+                            end
+                            val = val.args[2]
+                        end
+                        description = val.args[3]
+                        val = val.args[2]
+                    end
+                    latex_label = params.mod[].eval(val.args[3])
+                    val = val.args[2]
+                end
+                label = val.args[3]
+                val = val.args[2]
+            end
+            val = ModelParam(val)
+    elseif val.head == :vect
+            val = val.args
+        end
+    end
     if key in fieldnames(typeof(params))
         throw(ArgumentError("Invalid parameter name: $key."))
     end
@@ -363,6 +357,11 @@ function Base.setindex!(params::Parameters, val, key)
     _addlink(params, val, key)
     p.link = _link(val)
     p.value = _value(val)
+    p.label = label
+    p.latex_label = latex_label
+    p.description = description
+    p.prior = prior
+    p.estimate = estimate
     _update_values(params, p, key)
     params.rev[] = hash(params.contents)
     return params

@@ -505,7 +505,7 @@ macro parameters(model, args::Expr...)
         if Meta.isexpr(a, :(=), 2)
             key, value = a.args
             key = QuoteNode(key)
-            # value = Meta.quot(value)
+            value = Meta.quot(value)
             push!(ret.args, :(push!($(model).parameters, $(key) => $(value))))
             continue
         end
