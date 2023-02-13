@@ -62,11 +62,12 @@ mutable struct ModelParam <: AbstractParam
     latex_label::LaTeXString # LaTex name
     description::String
     prior # Prior distribution
+    limits::Tuple{Float64, Float64} # (lower bound, upper bound)
     estimate::Bool # estimated? (true or false)
 end
-ModelParam() = ModelParam(Set{Symbol}(), nothing, nothing, "", L"", "", nothing, false)
-ModelParam(value) = ModelParam(Set{Symbol}(), nothing, value, "", L"", "", nothing, false)
-ModelParam(value::Union{Symbol,Expr}) = ModelParam(Set{Symbol}(), value, nothing, "", L"", "", nothing, false)
+ModelParam() = ModelParam(Set{Symbol}(), nothing, nothing, "", L"", "", nothing, (-Inf, Inf), false)
+ModelParam(value) = ModelParam(Set{Symbol}(), nothing, value, "", L"", "", nothing, (-Inf, Inf), false)
+ModelParam(value::Union{Symbol,Expr}) = ModelParam(Set{Symbol}(), value, nothing, "", L"", "", nothing, (-Inf, Inf), false)
 
 Base.hash(mp::ModelParam, h::UInt) = hash((mp.link, mp.value), h)
 
@@ -311,6 +312,7 @@ function Base.setindex!(params::Parameters, val, key)
     label = ""
     latex_label = L""
     prior = nothing
+    limits = (-Inf, Inf)
     estimate = false
     description = ""
     if val isa Symbol
@@ -318,18 +320,20 @@ function Base.setindex!(params::Parameters, val, key)
     end
     if val isa Expr
         if val.head == :call
-            # variable = value | ascii name | LaTex name | description | Prior distribution | estimated
+            # variable = value | ascii name | LaTex name | description | Prior distribution | limits | estimated
             if val.args[1] == :(|)
                 if val.args[2] isa Expr && val.args[2].head == :call && val.args[2].args[1] == :(|)
                     if val.args[2].args[2] isa Expr && val.args[2].args[2].head == :call && val.args[2].args[2].args[1] == :(|)
                         if val.args[2].args[2].args[2] isa Expr && val.args[2].args[2].args[2].head == :call && val.args[2].args[2].args[2].args[1] == :(|)
                             if val.args[2].args[2].args[2].args[2] isa Expr && val.args[2].args[2].args[2].args[2].head == :call && val.args[2].args[2].args[2].args[2].args[1] == :(|)
-                                estimate = val.args[3]
+                                if val.args[2].args[2].args[2].args[2].args[2] isa Expr && val.args[2].args[2].args[2].args[2].args[2].head == :call && val.args[2].args[2].args[2].args[2].args[2].args[1] == :(|)
+                                    estimate = val.args[3]
+                                    val = val.args[2]
+                                end
+                                limits = params.mod[].eval(val.args[3])
                                 val = val.args[2]
                             end
-                            if val.args[3] !== :(_)
-                                prior = params.mod[].eval(val.args[3])
-                            end
+                            prior = params.mod[].eval(val.args[3])
                             val = val.args[2]
                         end
                         description = val.args[3]
@@ -361,6 +365,7 @@ function Base.setindex!(params::Parameters, val, key)
     p.latex_label = latex_label
     p.description = description
     p.prior = prior
+    p.limits = limits
     p.estimate = estimate
     _update_values(params, p, key)
     params.rev[] = hash(params.contents)

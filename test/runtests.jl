@@ -563,12 +563,13 @@ end
     push!(params, :α => :( 0.3 | "alpha" ))
     push!(params, :β => :( 0.99 | "beta" | L"\beta" ))
     push!(params, :δ => :( 0.02 | "delta" | L"\delta" | "depreciation rate" ))
-    push!(params, :ξ => :( 1.0 | "xi" | L"\xi" | "risk aversion" | Normal(1.5,.37) | true ))
+    push!(params, :ξ => :( 1.0 | "xi" | L"\xi" | "risk aversion" | Normal(1.5,.37) | (0.0, Inf) | true ))
 
     @test params[:α].label == "alpha"
     @test params[:β].latex_label == L"\beta"
     @test params[:δ].description == "depreciation rate"
     @test params[:ξ].prior == Normal(1.5,.37)
+    @test params[:ξ].limits == (0.0, Inf)
     @test params[:ξ].estimate == true
 end
 
